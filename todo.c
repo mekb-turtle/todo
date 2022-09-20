@@ -10,8 +10,11 @@
 #define eprintf(...) fprintf(stderr, __VA_ARGS__)
 #define strerr strerror(errno)
 #define TODO_FILE ".todolist"
+#define DONE_CHAR '#'
+#define TODO_CHAR '.'
 #define BLOCK 128
 char **read_lines(FILE *in_f) {
+	errno = 1;
 	char **l = NULL;
 	size_t len = 0;
 	size_t real_len = 0;
@@ -20,14 +23,13 @@ char **read_lines(FILE *in_f) {
 	bool start = 1;
 	bool linestart = 1;
 	while (1) {
-#define line l[lines-1]
 		int c = fgetc(in_f);
 		if (c == '\r' || c == '\0' || c == '\v') continue;
 		if (c < 0 || c == '\n' || start) {
-			if (start || (len > 0 && line)) {
+			if (start || (len > 0 && l[lines-1])) {
 				start = 0;
-				if (lines > 0 && len > 0 && line) {
-					line[len] = '\0';
+				if (lines > 0 && len > 0 && l[lines-1]) {
+					l[lines-1][len] = '\0';
 				}
 				++lines;
 				linestart = 1;
@@ -35,7 +37,11 @@ char **read_lines(FILE *in_f) {
 				real_len = 0;
 				if (lines >= real_lines) {
 					real_lines += BLOCK;
-					l = realloc(l, (real_lines+2) * sizeof(char*));
+					l = realloc(l, (real_lines+4) * sizeof(char*));
+					if (!l[lines-1]) {
+						eprintf("realloc: %s\n", strerr);
+						return NULL;
+					}
 				}
 			}
 			if (c < 0) break;
@@ -45,14 +51,17 @@ char **read_lines(FILE *in_f) {
 		if (len >= real_len) {
 			real_len += BLOCK;
 			if (linestart) {
-				line = NULL;
+				l[lines-1] = NULL;
 			}
 			linestart = 0;
-			line = realloc(line, real_len+1);
-			if (!line) return NULL;
+			l[lines-1] = realloc(l[lines-1], real_len+1);
+			if (!l[lines-1]) {
+				eprintf("realloc: %s\n", strerr);
+				return NULL;
+			}
 		}
 		if (c < 0) break;
-		line[len-1] = c;
+		l[lines-1][len-1] = c;
 	}
 	l[lines-1] = NULL;
 	return l;
@@ -72,8 +81,8 @@ enum bool_error {
 enum bool_error write_lines(char **lines, FILE *fp) {
 	if (!lines) return FALSE;
 	for (; *lines; ++lines) {
-		puts((char*)*lines);
-		putc('\n', fp);
+		fputs((char*)*lines, fp);
+		fputc('\n', fp);
 	}
 	return TRUE;
 }
@@ -103,8 +112,8 @@ int usage(char *argv0) {
 Usage: %s\n\
 	add [text]          : adds to list\n\
 	remove [index]      : removes from list at index\n\
-	todo [index]        : marks at index as todo\n\
-	done [index]        : marks at index as done\n\
+	todo [index]        : marks entry at index as to-do\n\
+	done [index]        : marks entry at index as done\n\
 	edit [index] [text] : edits text at index\n\
 	list                : list all items\n\
 	clear               : clear completely\n\
@@ -117,23 +126,56 @@ char *get_home() {
 	if (!my_pwd) return NULL;
 	return my_pwd->pw_dir;
 }
-int parseint(char *a) {
+long parselong(char *a) {
 	char *b = a;
 	for (size_t i = 0; *b; ++i) { if (i > 16) return 5; if (*b < '0' || *b > '9') return 0; ++b; }
-	return atoi(a);
+	return atol(a);
 }
 char *todo_string(char *a) {
 	if (!a) return NULL;
 	size_t s = strlen(a);
 	char *b = malloc(s + 2);
-	if (!b) return NULL;
-	b[0] = '.';
+	if (!b) {
+		eprintf("malloc: %s\n", strerr);
+		return NULL;
+	}
+	b[0] = TODO_CHAR;
 	memcpy(b+1, a, s+1);
 	return b;
 }
+bool has_prefix(char c) {
+	return c == TODO_CHAR || c == DONE_CHAR;
+}
+char *prefix_color(bool isatty_stdout) {
+	if (isatty_stdout) return "\x1b[0;38;5;7m";
+	return "";
+}
+char *remove_prefix(char *line) {
+	return line + (has_prefix(line[0]) ? 1 : 0);
+}
+char *prefix(bool isatty_stdout, char c) {
+	bool is_done = c == DONE_CHAR;
+	char *p = malloc(64);
+	if (!p) return NULL;
+	if (isatty_stdout) {
+		snprintf(p, 64, "\x1b[0;38;5;7m[\x1b[38;5;%im%s\x1b[38;5;7m]\x1b[0m ", is_done ? 9 : 10, is_done ? "DONE" : "TODO");
+	} else {
+		snprintf(p, 16, "[%s] ", is_done ? "DONE" : "TODO");
+	}
+	return p;
+}
+void list_lines(bool isatty_stdout, char **lines, size_t lines_len) {
+	printf("To-do list:\n");
+	for (size_t i = 0; i < lines_len; ++i) {
+		printf("%s% 4li. %s%s\x1b[0m\n",
+			prefix_color(isatty_stdout), i+1,
+			prefix(isatty_stdout, lines[i][0]),
+			remove_prefix(lines[i]));
+	}
+}
 int main(int argc, char *argv[]) {
 #define INVALID return usage(argv[0])
-	if (argc < 2 || argc > 3) {
+	if (argc < 2 || argc > 4) {
 		INVALID;
 	}
 	char *home = get_home();
@@ -149,59 +191,92 @@ int main(int argc, char *argv[]) {
 	sprintf(file_name, "%s/%s", home, TODO_FILE);
 	enum bool_error b = exists(file_name);
 	char **lines = NULL;
-	if (b == ERROR) return 1;
-	else if (b == TRUE) {
+	if (b == ERROR) {
+		return errno;
+	} else if (b == TRUE) {
 		lines = read_todo(file_name);
+		if (!lines) return errno||1;
 	}
 	bool isatty_stdout = isatty(STDOUT_FILENO);
-	bool is_add    = strcmp(argv[1], "add")    == 0 && argc == 3;
-	bool is_remove = strcmp(argv[1], "remove") == 0 && argc == 3;
-	bool is_todo   = strcmp(argv[1], "todo")   == 0 && argc == 3;
-	bool is_done   = strcmp(argv[1], "done")   == 0 && argc == 3;
-	bool is_edit   = strcmp(argv[1], "edit")   == 0 && argc == 4;
-	bool is_list   = strcmp(argv[1], "list")   == 0 && argc == 2;
-	bool is_clear  = strcmp(argv[1], "clear")  == 0 && argc == 2;
 	size_t lines_len = 0;
-	for (char **t = lines; *t; ++t, ++lines_len);
-	printf("AA %s\n",lines[lines_len]);
-	if (is_add) {
-		char *u = todo_string(argv[3]);
+	if (lines) for (char **t = lines; *t; ++t, ++lines_len);
+	if (argc == 3 && strcmp(argv[1], "add") == 0) {
+		char *u = todo_string(argv[2]);
 		if (!u) return 1;
-		lines[lines_len] = u;
-		write_todo(lines, file_name);
-	} else if (is_remove) {
-		int i = parseint(argv[2]);
-		if (i <= 0 || i > lines_len) {
-			eprintf("Invalid index");
-		}
-	} else if (is_edit) {
-		int i = parseint(argv[2]);
-		if (i <= 0 || i > lines_len) {
-			eprintf("Invalid index");
-		}
-		char *u = todo_string(argv[3]);
-		if (!u) return 1;
-		lines[i-1] = u;
-		printf("Edited entry at %i to\n%s\n", i, argv[3]);
-		write_todo(lines, file_name);
-	} else if (is_list) {
-		if (!lines || !*lines) {
-			printf("Nothing on todo list\n");
-			return 1;
-		} else {
-			for (size_t i = 1; i <= lines_len; ++i) {
-				bool is_done = *(lines[i]) == '#';
-				if (isatty_stdout) {
-					printf("\x1b[0;38;5;7m% 4li. [\x1b[38;5;%im%s\x1b[38;5;7m]\x1b[0m %s\x1b[0m\n",
-						i, is_done ? 11 : 10, is_done ? "DONE" : "TODO",
-						lines[i] + (lines[i][0] == '.' || lines[i][0] == '#' ? 1 : 0));
-				} else {
-					printf("%li. \t[%s] %s\n", i, is_done ? "DONE" : "TODO", *lines);
-				}
+		if (!lines) {
+			lines = malloc(sizeof(char*) * 2);
+			if (!lines) {
+				eprintf("malloc: %s\n", strerr);
+				return errno;
 			}
 		}
-	} else if (is_clear) {
-		write_todo(NULL, file_name);
+		lines[lines_len] = u;
+		lines[lines_len+1] = NULL;
+		printf("Added entry: %s%li. %s%s\n", prefix_color(isatty_stdout), lines_len+1, prefix(isatty_stdout, u[0]), argv[2]);
+		list_lines(isatty_stdout, lines, lines_len+1);
+		write_todo(lines, file_name);
+	} else if (argc == 3 && strcmp(argv[1], "todo") == 0) {
+		long i = parselong(argv[2]);
+		if (i <= 0 || i > lines_len) {
+			eprintf("Invalid index\n"); return 1;
+		}
+		if (!has_prefix(lines[i-1][0])) {
+			lines[i-1] = todo_string(lines[i-1]);
+		}
+		if (lines[i-1][0] == TODO_CHAR) {
+			eprintf("Entry is already marked as to-do: %s%li. %s%s\n", prefix_color(isatty_stdout), i, prefix(isatty_stdout, lines[i-1][0]), remove_prefix(lines[i-1]));
+		} else {
+			lines[i-1][0] = TODO_CHAR;
+			printf("Marked entry as to-do: %s%li. %s%s\n", prefix_color(isatty_stdout), i, prefix(isatty_stdout, lines[i-1][0]), remove_prefix(lines[i-1]));
+			list_lines(isatty_stdout, lines, lines_len);
+			write_todo(lines, file_name);
+		}
+	} else if (argc == 3 && strcmp(argv[1], "done") == 0) {
+		long i = parselong(argv[2]);
+		if (i <= 0 || i > lines_len) {
+			eprintf("Invalid index\n"); return 1;
+		}
+		if (!has_prefix(lines[i-1][0])) {
+			lines[i-1] = todo_string(lines[i-1]);
+		}
+		if (lines[i-1][0] == DONE_CHAR) {
+			eprintf("Entry is already marked as done: %s%li. %s%s\n", prefix_color(isatty_stdout), i, prefix(isatty_stdout, lines[i-1][0]), remove_prefix(lines[i-1]));
+		} else {
+			lines[i-1][0] = DONE_CHAR;
+			printf("Marked entry as done: %s%li. %s%s\n", prefix_color(isatty_stdout), i, prefix(isatty_stdout, lines[i-1][0]), remove_prefix(lines[i-1]));
+			list_lines(isatty_stdout, lines, lines_len);
+			write_todo(lines, file_name);
+		}
+	} else if (argc == 3 && strcmp(argv[1], "remove") == 0) {
+		long i = parselong(argv[2]);
+		if (i <= 0 || i > lines_len) {
+			eprintf("Invalid index\n"); return 1;
+		}
+	} else if (argc == 4 && strcmp(argv[1], "edit") == 0) {
+		long i = parselong(argv[2]);
+		if (i <= 0 || i > lines_len) {
+			eprintf("Invalid index\n"); return 1;
+		}
+		char *u = todo_string(argv[3]);
+		if (!u) return 1;
+		if (lines[i-1][0] == DONE_CHAR) u[0] = DONE_CHAR;
+		lines[i-1] = u;
+		printf("Edited entry: %s%li. %s%s\n", prefix_color(isatty_stdout), i, prefix(isatty_stdout, lines[i-1][0]), argv[3]);
+		list_lines(isatty_stdout, lines, lines_len);
+		write_todo(lines, file_name);
+	} else if (argc == 2 && strcmp(argv[1], "list") == 0) {
+		if (!lines || !*lines) {
+			printf("There is nothing on to-do list\n"); return 1;
+		} else {
+			list_lines(isatty_stdout, lines, lines_len);
+		}
+	} else if (argc == 2 && strcmp(argv[1], "clear") == 0) {
+		if (!lines || !*lines) {
+			printf("There already is nothing on to-do list\n"); return 1;
+		} else {
+			write_todo(NULL, file_name);
+			printf("Cleared to-do list\n");
+		}
 	} else {
 		INVALID;
 	}
