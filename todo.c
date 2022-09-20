@@ -146,49 +146,66 @@ char *todo_string(char *a) {
 bool has_prefix(char c) {
 	return c == TODO_CHAR || c == DONE_CHAR;
 }
-char *prefix_color(bool isatty_stdout) {
-	if (isatty_stdout) return "\x1b[0;38;5;7m";
+char *prefix_color(bool is_color) {
+	if (is_color) return "\x1b[0;38;5;7m";
 	return "";
 }
 char *remove_prefix(char *line) {
 	return line + (has_prefix(line[0]) ? 1 : 0);
 }
-char *prefix(bool isatty_stdout, char c) {
+char *prefix(bool is_color, char c) {
 	bool is_done = c == DONE_CHAR;
 	char *p = malloc(64);
 	if (!p) return NULL;
-	if (isatty_stdout) {
+	if (is_color) {
 		snprintf(p, 64, "\x1b[0;38;5;7m[\x1b[38;5;%im%s\x1b[38;5;7m]\x1b[0m ", is_done ? 9 : 10, is_done ? "DONE" : "TODO");
 	} else {
 		snprintf(p, 16, "[%s] ", is_done ? "DONE" : "TODO");
 	}
 	return p;
 }
-void list_lines(bool isatty_stdout, char **lines, size_t lines_len) {
+void list_lines(bool is_color, char **lines, size_t lines_len) {
 	printf("To-do list:\n");
 	for (size_t i = 0; i < lines_len; ++i) {
 		printf("%s% 4li. %s%s\x1b[0m\n",
-			prefix_color(isatty_stdout), i+1,
-			prefix(isatty_stdout, lines[i][0]),
+			prefix_color(is_color), i+1,
+			prefix(is_color, lines[i][0]),
 			remove_prefix(lines[i]));
 	}
 }
 int main(int argc, char *argv[]) {
 #define INVALID return usage(argv[0])
-	if (argc < 2 || argc > 4) {
+	char *file_name;
+	char *file_name_env = getenv("TODO_LOCATION");
+	if (file_name_env) {
+		file_name = file_name_env;
+	} else {
+		char *config_dir = getenv("XDG_CONFIG_HOME");
+		if (config_dir) {
+   			file_name = malloc(strlen(TODO_FILE) + strlen(config_dir) + 4);
+			if (!file_name) {
+				eprintf("malloc: %s\n", strerr);
+				return 1;
+			}
+			sprintf(file_name, "%s/%s", config_dir, TODO_FILE);
+		} else {
+			char *home = get_home();
+			if (!home) {
+				eprintf("Failed to get home directory\n");
+				return 1;
+			}
+   			file_name = malloc(strlen(TODO_FILE) + strlen(home) + 12);
+			if (!file_name) {
+				eprintf("malloc: %s\n", strerr);
+				return 1;
+			}
+			sprintf(file_name, "%s/.config/%s", home, TODO_FILE);
+		}
+	}
+	if (argc < 2) {
+		printf("To-do file location: %s\n", file_name);
 		INVALID;
 	}
-	char *home = get_home();
-	if (!home) {
-		eprintf("Failed to get home directory\n");
-		return 1;
-	}
-	char *file_name = malloc(strlen(TODO_FILE) + strlen(home) + 8);
-	if (!file_name) {
-		eprintf("malloc: %s\n", strerr);
-		return 1;
-	}
-	sprintf(file_name, "%s/%s", home, TODO_FILE);
 	enum bool_error b = exists(file_name);
 	char **lines = NULL;
 	if (b == ERROR) {
@@ -197,7 +214,7 @@ int main(int argc, char *argv[]) {
 		lines = read_todo(file_name);
 		if (!lines) return errno||1;
 	}
-	bool isatty_stdout = isatty(STDOUT_FILENO);
+	bool is_color = isatty(STDOUT_FILENO);
 	size_t lines_len = 0;
 	if (lines) for (char **t = lines; *t; ++t, ++lines_len);
 	if (argc == 3 && strcmp(argv[1], "add") == 0) {
@@ -212,8 +229,8 @@ int main(int argc, char *argv[]) {
 		}
 		lines[lines_len] = u;
 		lines[lines_len+1] = NULL;
-		printf("Added entry: %s%li. %s%s\n", prefix_color(isatty_stdout), lines_len+1, prefix(isatty_stdout, u[0]), argv[2]);
-		list_lines(isatty_stdout, lines, lines_len+1);
+		printf("Added entry: %s%li. %s%s\n", prefix_color(is_color), lines_len+1, prefix(is_color, u[0]), remove_prefix(u));
+		list_lines(is_color, lines, lines_len+1);
 		write_todo(lines, file_name);
 	} else if (argc == 3 && strcmp(argv[1], "todo") == 0) {
 		long i = parselong(argv[2]);
@@ -224,11 +241,11 @@ int main(int argc, char *argv[]) {
 			lines[i-1] = todo_string(lines[i-1]);
 		}
 		if (lines[i-1][0] == TODO_CHAR) {
-			eprintf("Entry is already marked as to-do: %s%li. %s%s\n", prefix_color(isatty_stdout), i, prefix(isatty_stdout, lines[i-1][0]), remove_prefix(lines[i-1]));
+			eprintf("Entry is already marked as to-do: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, lines[i-1][0]), remove_prefix(lines[i-1]));
 		} else {
 			lines[i-1][0] = TODO_CHAR;
-			printf("Marked entry as to-do: %s%li. %s%s\n", prefix_color(isatty_stdout), i, prefix(isatty_stdout, lines[i-1][0]), remove_prefix(lines[i-1]));
-			list_lines(isatty_stdout, lines, lines_len);
+			printf("Marked entry as to-do: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, lines[i-1][0]), remove_prefix(lines[i-1]));
+			list_lines(is_color, lines, lines_len);
 			write_todo(lines, file_name);
 		}
 	} else if (argc == 3 && strcmp(argv[1], "done") == 0) {
@@ -240,11 +257,11 @@ int main(int argc, char *argv[]) {
 			lines[i-1] = todo_string(lines[i-1]);
 		}
 		if (lines[i-1][0] == DONE_CHAR) {
-			eprintf("Entry is already marked as done: %s%li. %s%s\n", prefix_color(isatty_stdout), i, prefix(isatty_stdout, lines[i-1][0]), remove_prefix(lines[i-1]));
+			eprintf("Entry is already marked as done: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, lines[i-1][0]), remove_prefix(lines[i-1]));
 		} else {
 			lines[i-1][0] = DONE_CHAR;
-			printf("Marked entry as done: %s%li. %s%s\n", prefix_color(isatty_stdout), i, prefix(isatty_stdout, lines[i-1][0]), remove_prefix(lines[i-1]));
-			list_lines(isatty_stdout, lines, lines_len);
+			printf("Marked entry as done: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, lines[i-1][0]), remove_prefix(lines[i-1]));
+			list_lines(is_color, lines, lines_len);
 			write_todo(lines, file_name);
 		}
 	} else if (argc == 3 && strcmp(argv[1], "remove") == 0) {
@@ -252,6 +269,14 @@ int main(int argc, char *argv[]) {
 		if (i <= 0 || i > lines_len) {
 			eprintf("Invalid index\n"); return 1;
 		}
+		size_t d = lines_len-(i-1);
+		printf("%li\n",d);
+		printf("Removed entry: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, lines[i-1][0]), remove_prefix(lines[i-1]));
+		free(lines[i-1]);
+		memmove(&lines[i-1], &lines[i], d*sizeof(char*));
+		--lines_len;
+		list_lines(is_color, lines, lines_len);
+		write_todo(lines, file_name);
 	} else if (argc == 4 && strcmp(argv[1], "edit") == 0) {
 		long i = parselong(argv[2]);
 		if (i <= 0 || i > lines_len) {
@@ -261,19 +286,20 @@ int main(int argc, char *argv[]) {
 		if (!u) return 1;
 		if (lines[i-1][0] == DONE_CHAR) u[0] = DONE_CHAR;
 		lines[i-1] = u;
-		printf("Edited entry: %s%li. %s%s\n", prefix_color(isatty_stdout), i, prefix(isatty_stdout, lines[i-1][0]), argv[3]);
-		list_lines(isatty_stdout, lines, lines_len);
+		printf("Edited entry: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, lines[i-1][0]), remove_prefix(u));
+		list_lines(is_color, lines, lines_len);
 		write_todo(lines, file_name);
 	} else if (argc == 2 && strcmp(argv[1], "list") == 0) {
 		if (!lines || !*lines) {
 			printf("There is nothing on to-do list\n"); return 1;
 		} else {
-			list_lines(isatty_stdout, lines, lines_len);
+			list_lines(is_color, lines, lines_len);
 		}
 	} else if (argc == 2 && strcmp(argv[1], "clear") == 0) {
 		if (!lines || !*lines) {
 			printf("There already is nothing on to-do list\n"); return 1;
 		} else {
+			list_lines(is_color, lines, lines_len);
 			write_todo(NULL, file_name);
 			printf("Cleared to-do list\n");
 		}
