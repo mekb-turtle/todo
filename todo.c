@@ -12,6 +12,7 @@
 #define TODO_FILE ".todolist"
 #define DONE_CHAR '#'
 #define TODO_CHAR '.'
+#define BLOCK_LINES 8
 #define BLOCK 128
 char **read_lines(FILE *in_f) {
 	errno = 1;
@@ -26,9 +27,9 @@ char **read_lines(FILE *in_f) {
 		int c = fgetc(in_f);
 		if (c == '\r' || c == '\0' || c == '\v') continue;
 		if (c < 0 || c == '\n' || start) {
-			if (start || (len > 0 && l[lines-1])) {
+			if (start || (len > 0 && l && l[lines-1])) {
 				start = 0;
-				if (lines > 0 && len > 0 && l[lines-1]) {
+				if (lines > 0 && len > 0 && l && l[lines-1]) {
 					l[lines-1][len] = '\0';
 				}
 				++lines;
@@ -36,7 +37,7 @@ char **read_lines(FILE *in_f) {
 				len = 0;
 				real_len = 0;
 				if (lines >= real_lines) {
-					real_lines += BLOCK;
+					real_lines += BLOCK_LINES;
 					l = realloc(l, (real_lines+4) * sizeof(char*));
 					if (!l[lines-1]) {
 						eprintf("realloc: %s\n", strerr);
