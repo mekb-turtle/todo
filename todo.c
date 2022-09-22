@@ -39,7 +39,7 @@ char **read_lines(FILE *in_f) {
 				if (lines >= real_lines) {
 					real_lines += BLOCK_LINES;
 					l = realloc(l, (real_lines+4) * sizeof(char*));
-					if (!l[lines-1]) {
+					if (!l) {
 						eprintf("realloc: %s\n", strerr);
 						return NULL;
 					}
@@ -238,33 +238,39 @@ int main(int argc, char *argv[]) {
 		if (i <= 0 || i > lines_len) {
 			eprintf("Invalid index\n"); return 1;
 		}
+		bool w = 0;
 		if (!has_prefix(lines[i-1][0])) {
 			lines[i-1] = todo_string(lines[i-1]);
+			w = 1;
 		}
 		if (lines[i-1][0] == TODO_CHAR) {
-			eprintf("Entry is already marked as to-do: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, lines[i-1][0]), remove_prefix(lines[i-1]));
+			eprintf("Entry is already marked as to-do: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, TODO_CHAR), remove_prefix(lines[i-1]));
 		} else {
 			lines[i-1][0] = TODO_CHAR;
-			printf("Marked entry as to-do: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, lines[i-1][0]), remove_prefix(lines[i-1]));
-			list_lines(is_color, lines, lines_len);
-			write_todo(lines, file_name);
+			printf("Marked entry as to-do: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, TODO_CHAR), remove_prefix(lines[i-1]));
+			w = 1;
 		}
+		list_lines(is_color, lines, lines_len);
+		if (w) write_todo(lines, file_name);
 	} else if (argc == 3 && strcmp(argv[1], "done") == 0) {
 		long i = parselong(argv[2]);
 		if (i <= 0 || i > lines_len) {
 			eprintf("Invalid index\n"); return 1;
 		}
+		bool w = 0;
 		if (!has_prefix(lines[i-1][0])) {
 			lines[i-1] = todo_string(lines[i-1]);
+			w = 1;
 		}
 		if (lines[i-1][0] == DONE_CHAR) {
-			eprintf("Entry is already marked as done: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, lines[i-1][0]), remove_prefix(lines[i-1]));
+			eprintf("Entry is already marked as done: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, DONE_CHAR), remove_prefix(lines[i-1]));
 		} else {
 			lines[i-1][0] = DONE_CHAR;
-			printf("Marked entry as done: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, lines[i-1][0]), remove_prefix(lines[i-1]));
-			list_lines(is_color, lines, lines_len);
-			write_todo(lines, file_name);
+			printf("Marked entry as done: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, DONE_CHAR), remove_prefix(lines[i-1]));
+			w = 1;
 		}
+		list_lines(is_color, lines, lines_len);
+		if (w) write_todo(lines, file_name);
 	} else if (argc == 3 && strcmp(argv[1], "remove") == 0) {
 		long i = parselong(argv[2]);
 		if (i <= 0 || i > lines_len) {
