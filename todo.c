@@ -277,7 +277,6 @@ int main(int argc, char *argv[]) {
 			eprintf("Invalid index\n"); return 1;
 		}
 		size_t d = lines_len-(i-1);
-		printf("%li\n",d);
 		printf("Removed entry: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, lines[i-1][0]), remove_prefix(lines[i-1]));
 		free(lines[i-1]);
 		memmove(&lines[i-1], &lines[i], d*sizeof(char*));
