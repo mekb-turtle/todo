@@ -9,7 +9,7 @@
 #include <pwd.h>
 #define eprintf(...) fprintf(stderr, __VA_ARGS__)
 #define strerr strerror(errno)
-#define TODO_FILE ".todolist"
+#define TODO_FILE "todolist"
 #define DONE_CHAR '#'
 #define TODO_CHAR '.'
 #define BLOCK_LINES 8
