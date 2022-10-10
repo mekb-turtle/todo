@@ -71,7 +71,8 @@ char **read_lines(FILE *in_f) {
 char **read_todo(char *file_name) {
 	FILE *f = fopen(file_name, "r");
 	if (!f) {
-		eprintf("fopen: %s: %s\n", file_name, strerr);
+		if (errno != ENOENT)
+			eprintf("fopen: %s: %s\nFailed to read to-do list\n", file_name, strerr);
 		return NULL;
 	}
 	return read_lines(f);
@@ -90,23 +91,10 @@ enum bool_error write_lines(char **lines, FILE *fp) {
 enum bool_error write_todo(char **lines, char *file_name) {
 	FILE *f = fopen(file_name, "w");
 	if (!f) {
-		eprintf("fopen: %s: %s\n", file_name, strerr);
+		eprintf("fopen: %s: %s\nFailed to write to-do list\n", file_name, strerr);
 		return ERROR;
 	}
 	return write_lines(lines, f);
-}
-enum bool_error exists(char *file_name) {
-	struct stat *s = malloc(sizeof(struct stat));
-	if (!s) {
-		eprintf("malloc: %s\n", strerr);
-		return ERROR;
-	}
-	int l = stat(file_name, s);
-	free(s);
-	if (l == 0) return TRUE;
-	if (errno == ENOENT) return FALSE;
-	eprintf("stat: %s: %s\n", file_name, strerr);
-	return ERROR;
 }
 int usage(char *argv0) {
 	eprintf("\
@@ -165,13 +153,19 @@ char *prefix(bool is_color, char c) {
 	}
 	return p;
 }
-void list_lines(bool is_color, char **lines, size_t lines_len) {
-	printf("To-do list:\n");
-	for (size_t i = 0; i < lines_len; ++i) {
-		printf("%s% 4li. %s%s\x1b[0m\n",
-			prefix_color(is_color), i+1,
-			prefix(is_color, lines[i][0]),
-			remove_prefix(lines[i]));
+bool list_lines(bool is_color, char **lines, size_t lines_len) {
+	if (!lines || !*lines || lines_len <= 0) {
+		printf("There is nothing on to-do list\n");
+		return 0;
+	} else {
+		printf("To-do list:\n");
+		for (size_t i = 0; i < lines_len; ++i) {
+			printf("%s% 4li. %s%s\x1b[0m\n",
+				prefix_color(is_color), i+1,
+				prefix(is_color, lines[i][0]),
+				remove_prefix(lines[i]));
+		}
+		return 1;
 	}
 }
 int main(int argc, char *argv[]) {
@@ -205,20 +199,17 @@ int main(int argc, char *argv[]) {
 	}
 	if (argc < 2) {
 		printf("To-do file location: %s\n", file_name);
-		INVALID;
+		usage(argv[0]);
 	}
-	enum bool_error b = exists(file_name);
 	char **lines = NULL;
-	if (b == ERROR) {
-		return errno;
-	} else if (b == TRUE) {
-		lines = read_todo(file_name);
-		if (!lines) return errno||1;
-	}
+	lines = read_todo(file_name);
+	if (!lines && errno != ENOENT) return errno||1;
 	bool is_color = isatty(STDOUT_FILENO);
 	size_t lines_len = 0;
 	if (lines) for (char **t = lines; *t; ++t, ++lines_len);
-	if (argc == 3 && strcmp(argv[1], "add") == 0) {
+	if (argc < 2) {
+		list_lines(is_color, lines, lines_len);
+	} else if (argc == 3 && strcmp(argv[1], "add") == 0) {
 		char *u = todo_string(argv[2]);
 		if (!u) return 1;
 		if (!lines) {
@@ -296,11 +287,7 @@ int main(int argc, char *argv[]) {
 		list_lines(is_color, lines, lines_len);
 		write_todo(lines, file_name);
 	} else if (argc == 2 && strcmp(argv[1], "list") == 0) {
-		if (!lines || !*lines) {
-			printf("There is nothing on to-do list\n"); return 1;
-		} else {
-			list_lines(is_color, lines, lines_len);
-		}
+		return list_lines(is_color, lines, lines_len) ? 0 : 1;
 	} else if (argc == 2 && strcmp(argv[1], "clear") == 0) {
 		if (!lines || !*lines) {
 			printf("There already is nothing on to-do list\n"); return 1;
