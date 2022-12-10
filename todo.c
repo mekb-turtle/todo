@@ -7,11 +7,14 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <pwd.h>
+#include <assert.h>
+#include <limits.h>
 #define eprintf(...) fprintf(stderr, __VA_ARGS__)
 #define strerr strerror(errno)
 #define TODO_FILE "todolist"
 #define DONE_CHAR '#'
 #define TODO_CHAR '.'
+#define DOING_CHAR '/'
 #define BLOCK_LINES 8
 #define BLOCK 128
 char **read_lines(FILE *in_f) {
@@ -39,10 +42,7 @@ char **read_lines(FILE *in_f) {
 				if (lines >= real_lines) {
 					real_lines += BLOCK_LINES;
 					l = realloc(l, (real_lines+4) * sizeof(char*));
-					if (!l) {
-						eprintf("realloc: %s\n", strerr);
-						return NULL;
-					}
+					assert(l);
 				}
 			}
 			if (c < 0) break;
@@ -56,10 +56,7 @@ char **read_lines(FILE *in_f) {
 			}
 			linestart = 0;
 			l[lines-1] = realloc(l[lines-1], real_len+1);
-			if (!l[lines-1]) {
-				eprintf("realloc: %s\n", strerr);
-				return NULL;
-			}
+			assert(l[lines-1]);
 		}
 		if (c < 0) break;
 		l[lines-1][len-1] = c;
@@ -72,41 +69,59 @@ char **read_todo(char *file_name) {
 	FILE *f = fopen(file_name, "r");
 	if (!f) {
 		if (errno != ENOENT)
-			eprintf("fopen: %s: %s\nFailed to read to-do list\n", file_name, strerr);
+			assert(f);
 		return NULL;
 	}
 	return read_lines(f);
 }
-enum bool_error {
-	FALSE, TRUE, ERROR
-};
-enum bool_error write_lines(char **lines, FILE *fp) {
-	if (!lines) return FALSE;
+bool write_lines(char **lines, FILE *fp) {
+	if (!lines) return false;
 	for (; *lines; ++lines) {
 		fputs((char*)*lines, fp);
 		fputc('\n', fp);
 	}
-	return TRUE;
+	return true;
 }
-enum bool_error write_todo(char **lines, char *file_name) {
+bool write_todo(char **lines, char *file_name) {
 	FILE *f = fopen(file_name, "w");
-	if (!f) {
-		eprintf("fopen: %s: %s\nFailed to write to-do list\n", file_name, strerr);
-		return ERROR;
-	}
+	assert(f);
 	return write_lines(lines, f);
 }
+char *arg_add_list[] = { "add", "new", "a", NULL };
+char *arg_remove_list[] = { "remove", "delete", "r", "del", NULL };
+char *arg_todo_list[] = { "todo", "t", NULL };
+char *arg_done_list[] = { "done", "finish", "finished", "d", NULL };
+char *arg_doing_list[] = { "doing", "dd", "wip", NULL };
+char *arg_edit_list[] = { "edit", "change", "e", NULL };
+char *arg_list_list[] = { "list", "l", "ls", NULL };
+char *arg_clear_list[] = { "clear", "clr", "cls", "c", NULL };
+bool argmatch(char *arg, char **list) {
+	for (; *list; ++list) { if (strcmp(arg, *list) == 0) return true; }
+	return false;
+}
+void printarglist(char **list) {
+	eprintf("	  ");
+	for (int a = 0; *list; a = 1, ++list) { if (a) eprintf("/"); eprintf("%s", *list); }
+	eprintf("\n");
+}
 int usage(char *argv0) {
-	eprintf("\
-Usage: %s\n\
-	add [text]          : adds to list\n\
-	remove [index]      : removes from list at index\n\
-	todo [index]        : marks entry at index as to-do\n\
-	done [index]        : marks entry at index as done\n\
-	edit [index] [text] : edits text at index\n\
-	list                : list all items\n\
-	clear               : clear completely\n\
-", argv0);
+	eprintf("Usage: %s\n", argv0);
+	eprintf("	add [text]          : adds to list\n");
+	printarglist(arg_add_list);
+	eprintf("	remove [index]      : removes from list at index\n");
+	printarglist(arg_remove_list);
+	eprintf("	todo [index]        : marks entry at index as to-do\n");
+	printarglist(arg_todo_list);
+	eprintf("	done [index]        : marks entry at index as done\n");
+	printarglist(arg_done_list);
+	eprintf("	doing [index]       : marks entry at index as doing\n");
+	printarglist(arg_doing_list);
+	eprintf("	edit [index] [text] : edits text at index\n");
+	printarglist(arg_edit_list);
+	eprintf("	list                : list all items\n");
+	printarglist(arg_list_list);
+	eprintf("	clear               : clear completely\n");
+	printarglist(arg_clear_list);
 	return 2;
 };
 char *get_home() {
@@ -117,7 +132,7 @@ char *get_home() {
 }
 long parselong(char *a) {
 	char *b = a;
-	for (size_t i = 0; *b; ++i) { if (i > 16) return 5; if (*b < '0' || *b > '9') return 0; ++b; }
+	for (size_t i = 0; *b; ++i, ++b) { if (i > 16) return LONG_MAX; if (*b < '0' || *b > '9') return LONG_MAX; }
 	return atol(a);
 }
 char *todo_string(char *a) {
@@ -133,7 +148,7 @@ char *todo_string(char *a) {
 	return b;
 }
 bool has_prefix(char c) {
-	return c == TODO_CHAR || c == DONE_CHAR;
+	return c == TODO_CHAR || c == DONE_CHAR || c == DOING_CHAR;
 }
 char *prefix_color(bool is_color) {
 	if (is_color) return "\x1b[0;38;5;7m";
@@ -143,13 +158,12 @@ char *remove_prefix(char *line) {
 	return line + (has_prefix(line[0]) ? 1 : 0);
 }
 char *prefix(bool is_color, char c) {
-	bool is_done = c == DONE_CHAR;
 	char *p = malloc(64);
 	if (!p) return NULL;
 	if (is_color) {
-		snprintf(p, 64, "\x1b[0;38;5;7m[\x1b[38;5;%im%s\x1b[38;5;7m]\x1b[0m ", is_done ? 9 : 10, is_done ? "DONE" : "TODO");
+		snprintf(p, 64, "\x1b[0;38;5;7m[\x1b[38;5;%im%s\x1b[38;5;7m]\x1b[0m ", c == DONE_CHAR ? 9 : c == DOING_CHAR ? 11 : 10, c == DONE_CHAR ? "DONE" : c == DOING_CHAR ? "DOING" : "TODO");
 	} else {
-		snprintf(p, 16, "[%s] ", is_done ? "DONE" : "TODO");
+		snprintf(p, 16, "[%s] ", c == DONE_CHAR ? "DONE" : c == DOING_CHAR ? "DOING" : "TODO");
 	}
 	return p;
 }
@@ -178,22 +192,13 @@ int main(int argc, char *argv[]) {
 		char *config_dir = getenv("XDG_CONFIG_HOME");
 		if (config_dir) {
    			file_name = malloc(strlen(TODO_FILE) + strlen(config_dir) + 4);
-			if (!file_name) {
-				eprintf("malloc: %s\n", strerr);
-				return 1;
-			}
+			assert(file_name);
 			sprintf(file_name, "%s/%s", config_dir, TODO_FILE);
 		} else {
 			char *home = get_home();
-			if (!home) {
-				eprintf("Failed to get home directory\n");
-				return 1;
-			}
+			assert(home);
    			file_name = malloc(strlen(TODO_FILE) + strlen(home) + 12);
-			if (!file_name) {
-				eprintf("malloc: %s\n", strerr);
-				return 1;
-			}
+			assert(file_name);
 			sprintf(file_name, "%s/.config/%s", home, TODO_FILE);
 		}
 	}
@@ -203,31 +208,28 @@ int main(int argc, char *argv[]) {
 	}
 	char **lines = NULL;
 	lines = read_todo(file_name);
-	if (!lines && errno != ENOENT) return errno||1;
 	bool is_color = isatty(STDOUT_FILENO);
 	size_t lines_len = 0;
 	if (lines) for (char **t = lines; *t; ++t, ++lines_len);
 	if (argc < 2) {
 		list_lines(is_color, lines, lines_len);
-	} else if (argc == 3 && strcmp(argv[1], "add") == 0) {
+	} else if (argc == 3 && argmatch(argv[1], arg_add_list)) {
 		char *u = todo_string(argv[2]);
 		if (!u) return 1;
 		if (!lines) {
-			lines = malloc(sizeof(char*) * 2);
-			if (!lines) {
-				eprintf("malloc: %s\n", strerr);
-				return errno;
-			}
+			lines = calloc(2, sizeof(char*));
+			assert(lines);
 		}
 		lines[lines_len] = u;
 		lines[lines_len+1] = NULL;
 		printf("Added entry: %s%li. %s%s\n", prefix_color(is_color), lines_len+1, prefix(is_color, u[0]), remove_prefix(u));
 		list_lines(is_color, lines, lines_len+1);
 		write_todo(lines, file_name);
-	} else if (argc == 3 && strcmp(argv[1], "todo") == 0) {
+	} else if (argc == 3 && argmatch(argv[1], arg_todo_list)) {
 		long i = parselong(argv[2]);
 		if (i <= 0 || i > lines_len) {
-			eprintf("Invalid index\n"); return 1;
+			eprintf("Argument must be an integer from 1 to %li\n", lines_len);
+			return 1;
 		}
 		bool w = 0;
 		if (!has_prefix(lines[i-1][0])) {
@@ -243,10 +245,11 @@ int main(int argc, char *argv[]) {
 		}
 		list_lines(is_color, lines, lines_len);
 		if (w) write_todo(lines, file_name);
-	} else if (argc == 3 && strcmp(argv[1], "done") == 0) {
+	} else if (argc == 3 && argmatch(argv[1], arg_done_list)) {
 		long i = parselong(argv[2]);
 		if (i <= 0 || i > lines_len) {
-			eprintf("Invalid index\n"); return 1;
+			eprintf("Argument must be an integer from 1 to %li\n", lines_len);
+			return 1;
 		}
 		bool w = 0;
 		if (!has_prefix(lines[i-1][0])) {
@@ -262,10 +265,31 @@ int main(int argc, char *argv[]) {
 		}
 		list_lines(is_color, lines, lines_len);
 		if (w) write_todo(lines, file_name);
-	} else if (argc == 3 && strcmp(argv[1], "remove") == 0) {
+	} else if (argc == 3 && argmatch(argv[1], arg_doing_list)) {
 		long i = parselong(argv[2]);
 		if (i <= 0 || i > lines_len) {
-			eprintf("Invalid index\n"); return 1;
+			eprintf("Argument must be an integer from 1 to %li\n", lines_len);
+			return 1;
+		}
+		bool w = 0;
+		if (!has_prefix(lines[i-1][0])) {
+			lines[i-1] = todo_string(lines[i-1]);
+			w = 1;
+		}
+		if (lines[i-1][0] == DOING_CHAR) {
+			eprintf("Entry is already marked as doing: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, DOING_CHAR), remove_prefix(lines[i-1]));
+		} else {
+			lines[i-1][0] = DOING_CHAR;
+			printf("Marked entry as doing: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, DOING_CHAR), remove_prefix(lines[i-1]));
+			w = 1;
+		}
+		list_lines(is_color, lines, lines_len);
+		if (w) write_todo(lines, file_name);
+	} else if (argc == 3 && argmatch(argv[1], arg_remove_list)) {
+		long i = parselong(argv[2]);
+		if (i <= 0 || i > lines_len) {
+			eprintf("Argument must be an integer from 1 to %li\n", lines_len);
+			return 1;
 		}
 		size_t d = lines_len-(i-1);
 		printf("Removed entry: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, lines[i-1][0]), remove_prefix(lines[i-1]));
@@ -274,21 +298,22 @@ int main(int argc, char *argv[]) {
 		--lines_len;
 		list_lines(is_color, lines, lines_len);
 		write_todo(lines, file_name);
-	} else if (argc == 4 && strcmp(argv[1], "edit") == 0) {
+	} else if (argc == 4 && argmatch(argv[1], arg_edit_list)) {
 		long i = parselong(argv[2]);
 		if (i <= 0 || i > lines_len) {
-			eprintf("Invalid index\n"); return 1;
+			eprintf("Argument must be an integer from 1 to %li\n", lines_len);
+			return 1;
 		}
 		char *u = todo_string(argv[3]);
 		if (!u) return 1;
-		if (lines[i-1][0] == DONE_CHAR) u[0] = DONE_CHAR;
+		if (lines[i-1][0] == DONE_CHAR || lines[i-1][0] == DOING_CHAR) u[0] = lines[i-1][0];
 		lines[i-1] = u;
 		printf("Edited entry: %s%li. %s%s\n", prefix_color(is_color), i, prefix(is_color, lines[i-1][0]), remove_prefix(u));
 		list_lines(is_color, lines, lines_len);
 		write_todo(lines, file_name);
-	} else if (argc == 2 && strcmp(argv[1], "list") == 0) {
+	} else if (argc == 2 && argmatch(argv[1], arg_list_list)) {
 		return list_lines(is_color, lines, lines_len) ? 0 : 1;
-	} else if (argc == 2 && strcmp(argv[1], "clear") == 0) {
+	} else if (argc == 2 && argmatch(argv[1], arg_clear_list)) {
 		if (!lines || !*lines) {
 			printf("There already is nothing on to-do list\n"); return 1;
 		} else {
