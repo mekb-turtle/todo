@@ -95,6 +95,7 @@ char *arg_doing_list[] = { "doing", "dd", "wip", NULL };
 char *arg_edit_list[] = { "edit", "change", "e", NULL };
 char *arg_list_list[] = { "list", "l", "ls", NULL };
 char *arg_clear_list[] = { "clear", "clr", "cls", "c", NULL };
+char *arg_html_list[] = { "html", "htm", NULL };
 bool argmatch(char *arg, char **list) {
 	for (; *list; ++list) { if (strcmp(arg, *list) == 0) return true; }
 	return false;
@@ -120,8 +121,10 @@ int usage(char *argv0) {
 	printarglist(arg_edit_list);
 	eprintf("	list                : list all items\n");
 	printarglist(arg_list_list);
-	eprintf("	clear               : clear completely\n");
+	eprintf("	clear confirm       : clear completely\n");
 	printarglist(arg_clear_list);
+	eprintf("	html [file] [title] : save list to a .html file to view in a browser\n");
+	printarglist(arg_html_list);
 	return 2;
 };
 char *get_home() {
@@ -181,6 +184,55 @@ bool list_lines(bool is_color, char **lines, size_t lines_len) {
 		}
 		return 1;
 	}
+}
+void print_escaped(FILE *out, char *text) {
+	for (; *text; ++text) {
+		if (*text == '<') fputs("&lt;", out);
+		else if (*text == '>') fputs("&gt;", out);
+		else if (*text == '&') fputs("&amp;", out);
+		else putc(*text, out);
+	}
+}
+void print_html(FILE *out, char **lines, char *title) {
+	fprintf(out, "\
+<html>\n\
+	<head>\n");
+	if (title) {
+		fprintf(out, "\t\t<title>");
+		print_escaped(out, title);
+		fprintf(out, "\t\t</title>\n");
+	}
+	fprintf(out, "\
+		<style>\n\
+			.gray  { color: #555555; }\n\
+			.todo  { color: #22CC22; }\n\
+			.done  { color: #CC2222; }\n\
+			.doing { color: #DDDD22; }\n\
+		</style>\n\
+	</head>\n\
+	<body>\n");
+	if (title) {
+		fprintf(out, "\t\t<h2>");
+		print_escaped(out, title);
+		fprintf(out, "\t\t</h2>\n");
+	}
+	fprintf(out, "\
+		<ol class=\"todolist\">\n");
+	for (; *lines; ++lines) {
+		char c = (*lines)[0];
+		fprintf(out, "\t\t\t<li class=\"todoitem\">\n");
+		fprintf(out, "\t\t\t\t<span class=\"gray\">[</span>\
+<span class=\"status %s\">%s</span>\
+<span class=\"gray\">]</span> \n\t\t\t\t",
+			c == DONE_CHAR ? "done" : c == DOING_CHAR ? "doing" : "todo",
+			c == DONE_CHAR ? "DONE" : c == DOING_CHAR ? "DOING" : "TODO");
+		print_escaped(out, remove_prefix(*lines));
+		fprintf(out, "\n\t\t\t</li>\n");
+	}
+	fprintf(out, "\
+		</ol>\n\
+	</body>\n\
+</html>\n");
 }
 int main(int argc, char *argv[]) {
 #define INVALID return usage(argv[0])
@@ -313,14 +365,27 @@ int main(int argc, char *argv[]) {
 		write_todo(lines, file_name);
 	} else if (argc == 2 && argmatch(argv[1], arg_list_list)) {
 		return list_lines(is_color, lines, lines_len) ? 0 : 1;
-	} else if (argc == 2 && argmatch(argv[1], arg_clear_list)) {
+	} else if ((argc == 3 || argc == 2) && argmatch(argv[1], arg_clear_list)) {
 		if (!lines || !*lines) {
-			printf("There already is nothing on to-do list\n"); return 1;
+			eprintf("There already is nothing on to-do list\n"); return 1;
 		} else {
-			list_lines(is_color, lines, lines_len);
-			write_todo(NULL, file_name);
-			printf("Cleared to-do list\n");
+			if (argc == 3 && strcmp(argv[2], "confirm") == 0) {
+				list_lines(is_color, lines, lines_len);
+				write_todo(NULL, file_name);
+				printf("Cleared to-do list\n");
+			} else {
+				eprintf("Use 'clear confirm' to confirm\n"); return 1;
+			}
 		}
+	} else if ((argc == 3 || argc == 4) && argmatch(argv[1], arg_html_list)) {
+		FILE *out;
+		if (argv[2][0] == '-' && argv[2][1] == '\0') {
+			out = stdout;
+		} else {
+			out = fopen(argv[2], "w");
+		}
+		assert(out);
+		print_html(out, lines, argc >= 4 ? argv[3] : NULL);
 	} else {
 		INVALID;
 	}
