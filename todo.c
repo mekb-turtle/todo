@@ -195,7 +195,9 @@ void print_escaped(FILE *out, char *text) {
 void print_html(FILE *out, char **lines, char *title) {
 	fprintf(out, "\
 <html>\n\
-	<head>\n");
+	<head>\n\
+		<meta charset=\"UTF-8\"/>\n\
+		<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"/>\n");
 	if (title) {
 		fprintf(out, "\t\t<title>");
 		print_escaped(out, title);
