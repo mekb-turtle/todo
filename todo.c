@@ -174,16 +174,15 @@ bool list_lines(bool is_color, char **lines, size_t lines_len) {
 	if (!lines || !*lines || lines_len <= 0) {
 		printf("There is nothing on to-do list\n");
 		return 0;
-	} else {
-		printf("To-do list:\n");
-		for (size_t i = 0; i < lines_len; ++i) {
-			printf("%s% 4li. %s%s\x1b[0m\n",
-				prefix_color(is_color), i+1,
-				prefix(is_color, lines[i][0]),
-				remove_prefix(lines[i]));
-		}
-		return 1;
 	}
+	printf("To-do list:\n");
+	for (size_t i = 0; i < lines_len; ++i) {
+		printf("%s% 4li. %s%s\x1b[0m\n",
+			prefix_color(is_color), i+1,
+			prefix(is_color, lines[i][0]),
+			remove_prefix(lines[i]));
+	}
+	return 1;
 }
 void print_escaped(FILE *out, char *text) {
 	for (; *text; ++text) {
@@ -262,7 +261,7 @@ int main(int argc, char *argv[]) {
 	lines = read_todo(file_name);
 	bool is_color = isatty(STDOUT_FILENO);
 	size_t lines_len = 0;
-	if (lines) for (char **t = lines; *t; ++t, ++lines_len);
+	if (lines) for (char **t = lines; *t; ++t, ++lines_len) {}
 	if (argc < 2) {
 		list_lines(is_color, lines, lines_len);
 	} else if (argc == 3 && argmatch(argv[1], arg_add_list)) {
@@ -368,14 +367,13 @@ int main(int argc, char *argv[]) {
 	} else if ((argc == 3 || argc == 2) && argmatch(argv[1], arg_clear_list)) {
 		if (!lines || !*lines) {
 			eprintf("There already is nothing on to-do list\n"); return 1;
+		}
+		if (argc == 3 && strcmp(argv[2], "confirm") == 0) {
+			list_lines(is_color, lines, lines_len);
+			write_todo(NULL, file_name);
+			printf("Cleared to-do list\n");
 		} else {
-			if (argc == 3 && strcmp(argv[2], "confirm") == 0) {
-				list_lines(is_color, lines, lines_len);
-				write_todo(NULL, file_name);
-				printf("Cleared to-do list\n");
-			} else {
-				eprintf("Use 'clear confirm' to confirm\n"); return 1;
-			}
+			eprintf("Use 'clear confirm' to confirm\n"); return 1;
 		}
 	} else if ((argc == 3 || argc == 4) && argmatch(argv[1], arg_html_list)) {
 		FILE *out;
