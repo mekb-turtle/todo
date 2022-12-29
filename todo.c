@@ -88,7 +88,7 @@ bool write_todo(char **lines, char *file_name) {
 	return write_lines(lines, f);
 }
 char *arg_add_list[] = { "add", "new", "a", NULL };
-char *arg_remove_list[] = { "remove", "delete", "r", "del", NULL };
+char *arg_remove_list[] = { "remove", "rm", "delete", "r", "del", NULL };
 char *arg_todo_list[] = { "todo", "t", NULL };
 char *arg_done_list[] = { "done", "finish", "finished", "d", NULL };
 char *arg_doing_list[] = { "doing", "dd", "wip", NULL };
